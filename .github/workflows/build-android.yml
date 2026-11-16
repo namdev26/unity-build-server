@@ -36,8 +36,10 @@ on:
         required: false
         default: ""
 
+# Mỗi lần build mượn một suất license Unity Personal (tài khoản chỉ có vài suất),
+# nên chạy lần lượt từng build một.
 concurrency:
-  group: build-${{ inputs.game }}
+  group: unity-license-seat
   cancel-in-progress: false
 
 jobs:
@@ -109,24 +111,27 @@ jobs:
 
       - name: Build Unity
         id: build
-        uses: game-ci/unity-builder@v4
         env:
-          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          IMAGE: unityci/editor:ubuntu-${{ steps.info.outputs.unity }}-android-3
           UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
           UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
-        with:
-          projectPath: ${{ env.PROJECT_DIR }}
-          targetPlatform: Android
-          buildMethod: CIBuild.BuildAndroid
-          buildName: ${{ inputs.game }}-${{ steps.info.outputs.version }}-${{ inputs.build_type }}-${{ steps.info.outputs.stamp }}
-          androidExportType: ${{ inputs.export == 'aab' && 'androidAppBundle' || 'androidPackage' }}
-          versioning: None
+          BUILD_TYPE: ${{ inputs.build_type }}
+          EXPORT_TYPE: ${{ inputs.export == 'aab' && 'androidAppBundle' || 'androidPackage' }}
+          OUT_NAME: ${{ inputs.game }}-${{ steps.info.outputs.version }}-${{ inputs.build_type }}-${{ steps.info.outputs.stamp }}.${{ inputs.export }}
           # Chỉ dùng cho release. Đặt secrets theo tên game, vd KEYSTORE_PASS_MUKBANG.
-          androidKeystorePass: ${{ inputs.build_type == 'release' && secrets[format('KEYSTORE_PASS_{0}', inputs.game)] || '' }}
-          androidKeyaliasName: ${{ inputs.build_type == 'release' && secrets[format('KEYALIAS_NAME_{0}', inputs.game)] || '' }}
-          androidKeyaliasPass: ${{ inputs.build_type == 'release' && secrets[format('KEYALIAS_PASS_{0}', inputs.game)] || '' }}
-          customParameters: -ciBuildType ${{ inputs.build_type }}
-          allowDirtyBuild: true
+          KS_PASS: ${{ inputs.build_type == 'release' && secrets[format('KEYSTORE_PASS_{0}', inputs.game)] || '' }}
+          KS_ALIAS: ${{ inputs.build_type == 'release' && secrets[format('KEYALIAS_NAME_{0}', inputs.game)] || '' }}
+          KS_ALIAS_PASS: ${{ inputs.build_type == 'release' && secrets[format('KEYALIAS_PASS_{0}', inputs.game)] || '' }}
+        run: |
+          mkdir -p build/Android
+          docker pull -q "$IMAGE" || { echo "::error title=Không có image Unity::Chưa có image $IMAGE trên Docker Hub (unityci/editor)."; exit 1; }
+          docker run --rm --shm-size=2g \
+            -v "$GITHUB_WORKSPACE":/ws -w /ws \
+            -e UNITY_EMAIL -e UNITY_PASSWORD -e BUILD_TYPE -e EXPORT_TYPE \
+            -e KS_PASS -e KS_ALIAS -e KS_ALIAS_PASS \
+            -e PROJECT_DIR="/ws/$PROJECT_DIR" \
+            -e OUTPUT_PATH="/ws/build/Android/$OUT_NAME" \
+            "$IMAGE" bash /ws/ci/build.sh
 
       - name: Tìm file build
         id: out

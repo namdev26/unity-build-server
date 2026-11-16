@@ -9,7 +9,6 @@ Vào **Settings → Secrets and variables → Actions → New repository secret*
 
 | Secret | Giá trị |
 |---|---|
-| `UNITY_LICENSE` | Nội dung file `C:\ProgramData\Unity\Unity_lic.ulf` (xem bên dưới) |
 | `UNITY_EMAIL` | Email tài khoản Unity |
 | `UNITY_PASSWORD` | Mật khẩu tài khoản Unity |
 | `GH_PAT` | GitHub **classic** token, quyền `repo`, để đọc các repo game |
@@ -18,10 +17,12 @@ Vào **Settings → Secrets and variables → Actions → New repository secret*
 Chỉ cần cho build **release** của từng game (thay `<GAME>` bằng tên game viết hoa, vd `MUKBANG`):
 `KEYSTORE_PASS_<GAME>`, `KEYALIAS_NAME_<GAME>`, `KEYALIAS_PASS_<GAME>`.
 
-### Lấy file license Unity Personal
-1. Unity Hub → Preferences → Licenses → **Add** → **Get a free personal license**.
-2. Kiểm tra file `C:\ProgramData\Unity\Unity_lic.ulf` (thư mục ẩn). Mở bằng Notepad, copy toàn bộ vào secret `UNITY_LICENSE`.
-3. Nếu không thấy file: hỏi lại, có cách khác.
+### License Unity
+Không cần file `.ulf` (Unity 6 không còn dùng được cho CI). Mỗi lần build, máy build đăng nhập bằng
+`UNITY_EMAIL` + `UNITY_PASSWORD` để mượn một suất license Personal, build xong thì trả lại.
+- Tài khoản phải **tắt xác minh 2 bước**, vì máy build không nhập mã được. Nên dùng một tài khoản Unity riêng cho build.
+- Tài khoản đăng nhập bằng Google thì phải đặt mật khẩu tại https://login.unity.com.
+- Các build chạy lần lượt từng cái để không chiếm nhiều suất cùng lúc.
 
 ### Tạo `GH_PAT`
 GitHub → Settings → Developer settings → Personal access tokens → **Tokens (classic)** → Generate, tick `repo`.
