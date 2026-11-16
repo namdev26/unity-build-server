@@ -27,7 +27,35 @@ Chỉ cần cho build **release** của từng game (thay `<GAME>` bằng tên g
 GitHub → Settings → Developer settings → Personal access tokens → **Tokens (classic)** → Generate, tick `repo`.
 Dùng classic vì repo game thuộc nhiều tài khoản khác nhau, fine-grained token không đọc được.
 
-## Build
+## Bot Telegram (`bot/worker.js`)
+Chạy miễn phí trên Cloudflare Workers, không cần cài gì trên máy.
+
+1. Telegram: nhắn **@BotFather** → `/newbot` → lấy token. Thêm token này vào secret `TELEGRAM_BOT_TOKEN` của repo này.
+2. GitHub → Settings → Developer settings → **Fine-grained tokens** → Generate:
+   chỉ chọn repo `unity-build-server`, quyền **Actions: Read and write**. Đây là `GH_TOKEN` cho bot.
+3. [dash.cloudflare.com](https://dash.cloudflare.com) (tài khoản miễn phí):
+   - **Workers & Pages → Create → Start with Hello World** → đặt tên, vd `unity-build-bot` → Deploy
+   - **Edit code** → xoá hết, dán nội dung `bot/worker.js` → Deploy
+   - **Storage & Databases → KV → Create** một namespace, vd `unity-build-bot`
+   - Quay lại Worker → **Settings → Bindings → Add → KV namespace**: tên biến `DB`, chọn namespace vừa tạo
+   - **Settings → Variables and Secrets → Add**:
+     - `TELEGRAM_BOT_TOKEN` (Secret): token bot
+     - `GH_TOKEN` (Secret): token ở bước 2
+     - `GH_REPO` (Text): `namdev26/unity-build-server`
+     - `WEBHOOK_SECRET` (Secret): chuỗi ngẫu nhiên bất kỳ (chữ, số, `_`, `-`)
+4. Mở `https://unity-build-bot.<tài-khoản>.workers.dev/setup` một lần.
+5. Telegram: gửi `/start` cho bot. **Người gửi đầu tiên thành chủ bot.**
+
+Dùng:
+```
+/addgame onepunch thanhndsomia/Somia---Ragdoll_One_Punch main
+/build              (chọn bằng nút)
+/build onepunch Nam-Dev debug
+/status
+/allow <chat_id>    (cho người/nhóm khác dùng, họ lấy id bằng /myid)
+```
+
+## Build bằng tay (không qua bot)
 Tab **Actions → Build Android → Run workflow**, điền:
 - `game`: tên ngắn, vd `mukbang`
 - `repo`: `thanhndsomia/Somia---Mukbang_ASMR`
