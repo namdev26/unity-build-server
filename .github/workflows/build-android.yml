@@ -1,0 +1,176 @@
+name: Build Android
+
+run-name: "${{ inputs.game }} · ${{ inputs.branch }} · ${{ inputs.build_type }}"
+
+# Repo này không gắn với game nào. Mọi thông tin game đều truyền qua inputs
+# (bot Telegram sẽ điền, hoặc bạn điền tay trên tab Actions).
+on:
+  workflow_dispatch:
+    inputs:
+      game:
+        description: "Tên ngắn của game (dùng cho tên file, cache, secrets). Vd: mukbang"
+        required: true
+      repo:
+        description: "Repo game dạng owner/name. Vd: thanhndsomia/Somia---Mukbang_ASMR"
+        required: true
+      branch:
+        description: "Nhánh cần build"
+        required: true
+        default: main
+      build_type:
+        description: "debug = Development build, key debug. release = ký bằng keystore của game"
+        type: choice
+        options: [debug, release]
+        default: debug
+      export:
+        description: "apk hoặc aab"
+        type: choice
+        options: [apk, aab]
+        default: apk
+      project_path:
+        description: "Thư mục Unity project bên trong repo game (để trống nếu nằm ở gốc)"
+        required: false
+        default: ""
+      chat_id:
+        description: "Telegram chat id để báo kết quả (bot tự điền)"
+        required: false
+        default: ""
+
+concurrency:
+  group: build-${{ inputs.game }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    env:
+      GAME_DIR: game
+      PROJECT_DIR: ${{ inputs.project_path != '' && format('game/{0}', inputs.project_path) || 'game' }}
+    steps:
+      - name: Báo Telegram - bắt đầu
+        if: inputs.chat_id != ''
+        env:
+          TG_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          CHAT_ID: ${{ inputs.chat_id }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          [ -z "$TG_TOKEN" ] && exit 0
+          curl -s -X POST "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" \
+            --data-urlencode chat_id="$CHAT_ID" --data-urlencode parse_mode=HTML \
+            --data-urlencode text="⏳ Bắt đầu build <b>${{ inputs.game }}</b> · ${{ inputs.branch }} · ${{ inputs.build_type }}
+          <a href=\"${RUN_URL}\">Xem tiến độ</a>" > /dev/null
+
+      - name: Dọn ổ đĩa
+        uses: jlumbroso/free-disk-space@v1.3.1
+        with:
+          tool-cache: false
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: true
+
+      - name: Lấy code build-server
+        uses: actions/checkout@v4
+
+      - name: Lấy code game
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.repo }}
+          ref: ${{ inputs.branch }}
+          token: ${{ secrets.GH_PAT }}
+          path: ${{ env.GAME_DIR }}
+          lfs: true
+
+      - name: Ghi lại thông tin build
+        id: info
+        run: |
+          cd "$GAME_DIR"
+          echo "commit=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+          cd "$GITHUB_WORKSPACE/$PROJECT_DIR"
+          echo "unity=$(grep m_EditorVersion: ProjectSettings/ProjectVersion.txt | awk '{print $2}')" >> "$GITHUB_OUTPUT"
+          echo "version=$(grep -m1 ' bundleVersion:' ProjectSettings/ProjectSettings.asset | awk '{print $2}')" >> "$GITHUB_OUTPUT"
+          echo "stamp=$(TZ=Asia/Ho_Chi_Minh date +%Y%m%d-%H%M)" >> "$GITHUB_OUTPUT"
+
+      - name: Chép script build chung vào project (không commit vào repo game)
+        run: |
+          mkdir -p "$PROJECT_DIR/Assets/Editor/__CIBuild"
+          cp unity/CIBuild.cs "$PROJECT_DIR/Assets/Editor/__CIBuild/CIBuild.cs"
+
+      - name: Cache Library
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.PROJECT_DIR }}/Library
+          key: Library-${{ inputs.game }}-Android-${{ github.run_id }}
+          restore-keys: |
+            Library-${{ inputs.game }}-Android-
+
+      - name: Build Unity
+        id: build
+        uses: game-ci/unity-builder@v4
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+        with:
+          projectPath: ${{ env.PROJECT_DIR }}
+          targetPlatform: Android
+          buildMethod: CIBuild.BuildAndroid
+          buildName: ${{ inputs.game }}-${{ steps.info.outputs.version }}-${{ inputs.build_type }}-${{ steps.info.outputs.stamp }}
+          androidExportType: ${{ inputs.export == 'aab' && 'androidAppBundle' || 'androidPackage' }}
+          versioning: None
+          # Chỉ dùng cho release. Đặt secrets theo tên game, vd KEYSTORE_PASS_MUKBANG.
+          androidKeystorePass: ${{ inputs.build_type == 'release' && secrets[format('KEYSTORE_PASS_{0}', inputs.game)] || '' }}
+          androidKeyaliasName: ${{ inputs.build_type == 'release' && secrets[format('KEYALIAS_NAME_{0}', inputs.game)] || '' }}
+          androidKeyaliasPass: ${{ inputs.build_type == 'release' && secrets[format('KEYALIAS_PASS_{0}', inputs.game)] || '' }}
+          customParameters: -ciBuildType ${{ inputs.build_type }}
+          allowDirtyBuild: true
+
+      - name: Tìm file build
+        id: out
+        if: success()
+        run: |
+          f=$(find build/Android -maxdepth 2 -type f \( -name '*.apk' -o -name '*.aab' \) | head -1)
+          [ -z "$f" ] && { echo "Không thấy file APK/AAB"; exit 1; }
+          echo "file=$f" >> "$GITHUB_OUTPUT"
+          echo "name=$(basename "$f")" >> "$GITHUB_OUTPUT"
+          echo "size=$(du -h "$f" | cut -f1)" >> "$GITHUB_OUTPUT"
+
+      - name: Upload file build
+        id: upload
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.out.outputs.name }}
+          path: ${{ steps.out.outputs.file }}
+          retention-days: 3
+          compression-level: 0
+
+      - name: Báo Telegram - kết quả
+        if: always() && inputs.chat_id != ''
+        env:
+          TG_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          CHAT_ID: ${{ inputs.chat_id }}
+          STATUS: ${{ job.status }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          FILE_URL: ${{ steps.upload.outputs.artifact-url }}
+          SIZE: ${{ steps.out.outputs.size }}
+        run: |
+          [ -z "$TG_TOKEN" ] && exit 0
+          if [ "$STATUS" = "success" ]; then
+            head="✅ <b>Build thành công</b>"
+            buttons='[[{"text":"⬇️ Tải file","url":"'"$FILE_URL"'"},{"text":"📄 Log","url":"'"$RUN_URL"'"}]]'
+          else
+            head="❌ <b>Build lỗi</b> ($STATUS)"
+            buttons='[[{"text":"📄 Xem log lỗi","url":"'"$RUN_URL"'"}]]'
+          fi
+          text="$head
+          Game: <b>${{ inputs.game }}</b>
+          Nhánh: ${{ inputs.branch }} · <code>${{ steps.info.outputs.commit }}</code>
+          Version: ${{ steps.info.outputs.version }} · Unity ${{ steps.info.outputs.unity }}
+          Kiểu: ${{ inputs.build_type }} · ${{ inputs.export }}${SIZE:+ · $SIZE}"
+          curl -s -X POST "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" \
+            --data-urlencode chat_id="$CHAT_ID" --data-urlencode parse_mode=HTML \
+            --data-urlencode text="$text" --data-urlencode reply_markup="{\"inline_keyboard\":$buttons}" > /dev/null
